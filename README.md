@@ -1,4 +1,4 @@
-# PDF Workshop
+# NR's PDF Workshop
 
 A Python web application for splitting, merging, and analyzing PDF documents.
 The responsive browser interface supports uploads, processing indicators, readable validation
