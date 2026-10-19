@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NR's PDF Workshop | Split, Merge &amp; Analyze</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="eyebrow">NR's PDF WORKSHOP</span>
+      <h1>Your pages. Your order.</h1>
+      <p>Split a document, bring multiple PDFs together, or inspect a document's details.</p>
+    </header>
+    <aside class="notice">
+      Files are processed on this server, not sent to a third-party service.
+      Total upload limit: {{ max_upload_mb }} MB per operation.
+      Downloads expire after {{ retention_minutes | round(1) }} minutes.
+    </aside>
+    <div class="workspace">
+      <section class="card" aria-labelledby="split-title">
+        <span class="step">01 / EXTRACT</span>
+        <h2 id="split-title">Split a PDF</h2>
+        <p>One new PDF for each comma-separated page or range.</p>
+        <form id="split-form">
+          <fieldset>
+            <label for="split-file">Source PDF</label>
+            <input id="split-file" name="file" type="file" accept=".pdf,application/pdf" required>
+            <label for="ranges">Pages to extract</label>
+            <input id="ranges" name="ranges" type="text" placeholder="1-5, 6, 7, 8-23" required aria-describedby="range-help">
+            <small id="range-help">Pages start at 1. Ranges include both endpoints; overlaps are allowed.</small>
+            <button type="submit">Split PDF</button>
+            <button type="button" class="secondary reset">Reset</button>
+          </fieldset>
+          <p class="status" role="status" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="status-text"></span></p>
+          <p class="error" role="alert" hidden></p>
+        </form>
+        <div id="split-results" class="results" aria-live="polite"></div>
+      </section>
+      <section class="card" aria-labelledby="merge-title">
+        <span class="step">02 / COMBINE</span>
+        <h2 id="merge-title">Merge PDFs</h2>
+        <p>Choose how many files to upload, then arrange their order.</p>
+        <form id="merge-form">
+          <fieldset>
+            <label for="file-count">Number of PDFs</label>
+            <div class="count-controls">
+              <input id="file-count" type="number" min="2" step="1" value="2" required>
+              <button id="apply-count" type="button" class="secondary">Set upload rows</button>
+            </div>
+            <small>Changing the count keeps existing selections where possible. Top row comes first.</small>
+            <div id="merge-rows"></div>
+            <button type="submit">Merge PDFs</button>
+            <button type="button" class="secondary reset">Reset</button>
+          </fieldset>
+          <p class="status" role="status" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="status-text"></span></p>
+          <p class="error" role="alert" hidden></p>
+        </form>
+        <div id="merge-results" class="results" aria-live="polite"></div>
+      </section>
+    </div>
+    <section class="card analysis-card" aria-labelledby="analyze-title">
+      <span class="step">03 / INSPECT</span>
+      <h2 id="analyze-title">Analyze PDFs</h2>
+      <p>View page count, file size, encryption status, document metadata, and each page's dimensions and orientation.</p>
+      <form id="analyze-form">
+        <fieldset>
+          <label for="analyze-file">PDF files to analyze</label>
+          <input id="analyze-file" name="file" type="file" accept=".pdf,application/pdf" multiple required>
+          <small>Select multiple PDFs at once. Each file gets a separate report. Encrypted files are identified, but protected details are unavailable. No analysis files are saved.</small>
+          <button type="submit">Analyze PDFs</button>
+          <button type="button" class="secondary reset">Reset</button>
+        </fieldset>
+        <p class="status" role="status" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="status-text"></span></p>
+        <p class="error" role="alert" hidden></p>
+      </form>
+      <div id="analyze-results" class="results" aria-live="polite"></div>
+    </section>
+    <footer>Splitting and merging require unencrypted PDFs. Keep your original files; editing may invalidate digital signatures.
+    <br>This PDF Workshop is brought to you by <a href="https://niranjan.kayacorp.cyou" target="_blank" rel="noopener">Niranjan Reddy</a>
+    </footer>
+    <noscript><p class="error">Enable JavaScript to upload PDFs and access generated downloads.</p></noscript>
+  </main>
+</body>
+</html>
