@@ -1,8 +1,9 @@
 """PDF operations independent of the web layer."""
 
+import logging
+import os
 import re
 import shutil
-import subprocess
 import tempfile
 import warnings
 from pathlib import Path
@@ -12,20 +13,41 @@ from pypdf import PdfReader, PdfWriter
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
 
+logger = logging.getLogger(__name__)
+
 
 class InputError(ValueError):
     """An input that cannot be processed."""
 
 
-class ConverterUnavailable(RuntimeError):
-    """The external document converter is not installed."""
+class OfficeUnavailable(RuntimeError):
+    """Microsoft Office automation is not available."""
 
 
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
 DOCUMENT_EXTENSIONS = {
-    ".csv", ".doc", ".docx", ".docm", ".html", ".htm", ".odt", ".odp",
-    ".ods", ".ppt", ".pptx", ".pptm", ".rtf", ".txt", ".xls", ".xlsx",
-    ".xlsm",
+    ".csv", ".doc", ".docm", ".docx", ".html", ".htm", ".odp", ".ods",
+    ".odt", ".ppt", ".pptm", ".pptx", ".rtf", ".txt", ".xls", ".xlsm",
+    ".xlsx",
+}
+OFFICE_APPLICATIONS = {
+    ".doc": ("Word.Application", "word"),
+    ".docm": ("Word.Application", "word"),
+    ".docx": ("Word.Application", "word"),
+    ".html": ("Word.Application", "word"),
+    ".htm": ("Word.Application", "word"),
+    ".odt": ("Word.Application", "word"),
+    ".rtf": ("Word.Application", "word"),
+    ".txt": ("Word.Application", "word"),
+    ".csv": ("Excel.Application", "excel"),
+    ".ods": ("Excel.Application", "excel"),
+    ".xls": ("Excel.Application", "excel"),
+    ".xlsm": ("Excel.Application", "excel"),
+    ".xlsx": ("Excel.Application", "excel"),
+    ".odp": ("PowerPoint.Application", "powerpoint"),
+    ".ppt": ("PowerPoint.Application", "powerpoint"),
+    ".pptm": ("PowerPoint.Application", "powerpoint"),
+    ".pptx": ("PowerPoint.Application", "powerpoint"),
 }
 
 
@@ -55,16 +77,16 @@ def images_to_pdf(uploads: list[FileStorage], destination: Path) -> int:
     )
     pages = []
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            for upload in ordered:
-                filename = upload.filename or ""
-                if not filename:
-                    raise InputError("Choose a filename for every image.")
-                if Path(filename).suffix.lower() not in IMAGE_EXTENSIONS:
-                    raise InputError(f"'{filename}' is not a supported image file.")
-                try:
-                    upload.stream.seek(0)
+        for upload in ordered:
+            filename = upload.filename or ""
+            if not filename:
+                raise InputError("Choose a filename for every image.")
+            if Path(filename).suffix.lower() not in IMAGE_EXTENSIONS:
+                raise InputError(f"'{filename}' is not a supported image file.")
+            try:
+                upload.stream.seek(0)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", Image.DecompressionBombWarning)
                     with Image.open(upload.stream) as image:
                         image.load()
                         image = ImageOps.exif_transpose(image)
@@ -72,18 +94,18 @@ def images_to_pdf(uploads: list[FileStorage], destination: Path) -> int:
                         page = Image.new("RGB", rgba.size, "white")
                         page.paste(rgba, mask=rgba.getchannel("A"))
                         pages.append(page)
-                except (
-                    Image.DecompressionBombError,
-                    Image.DecompressionBombWarning,
-                    UnidentifiedImageError,
-                    OSError,
-                    EOFError,
-                    SyntaxError,
-                    ValueError,
-                ) as error:
-                    raise InputError(
-                        f"'{filename}' is empty, damaged, or too large to process as an image."
-                    ) from error
+            except (
+                Image.DecompressionBombError,
+                Image.DecompressionBombWarning,
+                UnidentifiedImageError,
+                OSError,
+                EOFError,
+                SyntaxError,
+                ValueError,
+            ) as error:
+                raise InputError(
+                    f"'{filename}' is empty, damaged, or too large to process as an image."
+                ) from error
         pages[0].save(
             destination,
             "PDF",
@@ -107,55 +129,92 @@ def document_to_pdf(upload: FileStorage, destination: Path) -> None:
             f"'{filename}' is not a supported document type. Choose a Word, Excel, "
             "PowerPoint, OpenDocument, RTF, CSV, HTML, or text file."
         )
-    converter = shutil.which("soffice") or shutil.which("libreoffice")
-    if not converter:
-        raise ConverterUnavailable(
-            "Document conversion is unavailable. Install LibreOffice on the server "
-            "and ensure soffice is on PATH."
+    if suffix not in OFFICE_APPLICATIONS:
+        raise InputError(f"'{filename}' is not supported for Office conversion.")
+    if os.name != "nt":
+        raise OfficeUnavailable(
+            "Document conversion requires Windows with Microsoft Office installed."
         )
+    try:
+        import pythoncom
+        import pywintypes
+        from win32com.client import DispatchEx
+    except ImportError as error:
+        raise OfficeUnavailable(
+            "Document conversion requires pywin32. Install the application "
+            "requirements in its Windows environment."
+        ) from error
 
     safe_name = secure_filename(filename) or f"document{suffix}"
     with tempfile.TemporaryDirectory(prefix="document-convert-") as temporary:
         work = Path(temporary)
         source = work / safe_name
         upload.save(source)
-        profile = (work / "profile").as_uri()
+        prog_id, office_type = OFFICE_APPLICATIONS[suffix]
+        pythoncom.CoInitialize()
+        application = None
+        document = None
         try:
-            result = subprocess.run(
-                [
-                    converter,
-                    f"-env:UserInstallation={profile}",
-                    "--headless",
-                    "--convert-to",
-                    "pdf",
-                    "--outdir",
-                    str(work),
-                    str(source),
-                ],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise InputError(
-                f"'{filename}' took too long to convert. Try a smaller or simpler document."
-            ) from error
-        except OSError as error:
-            raise ConverterUnavailable(
-                "LibreOffice could not be started. Check the server installation."
-            ) from error
-        converted = work / f"{source.stem}.pdf"
-        if (
-            result.returncode != 0
-            or not converted.is_file()
-            or converted.stat().st_size == 0
-        ):
-            raise InputError(
-                f"'{filename}' could not be converted. Check that the file is valid "
-                "and supported."
-            )
-        shutil.copyfile(converted, destination)
+            try:
+                application = DispatchEx(prog_id)
+            except pywintypes.com_error as error:
+                raise OfficeUnavailable(
+                    f"Could not start {prog_id}. Make sure Microsoft Office is "
+                    "installed and activated for the account running this app."
+                ) from error
+            try:
+                application.Visible = False
+                application.DisplayAlerts = 0
+                application.AutomationSecurity = 3
+                converted = work / f"{source.stem}.pdf"
+                if office_type == "word":
+                    document = application.Documents.Open(
+                        str(source),
+                        ConfirmConversions=False,
+                        ReadOnly=True,
+                        AddToRecentFiles=False,
+                        Visible=False,
+                        OpenAndRepair=False,
+                    )
+                    document.ExportAsFixedFormat(str(converted), 17)
+                elif office_type == "excel":
+                    document = application.Workbooks.Open(
+                        str(source),
+                        UpdateLinks=0,
+                        ReadOnly=True,
+                        IgnoreReadOnlyRecommended=True,
+                    )
+                    document.ExportAsFixedFormat(0, str(converted))
+                else:
+                    document = application.Presentations.Open(
+                        str(source),
+                        ReadOnly=True,
+                        Untitled=False,
+                        WithWindow=False,
+                    )
+                    document.SaveAs(str(converted), 32)
+            except pywintypes.com_error as error:
+                raise InputError(
+                    f"'{filename}' could not be opened or exported by Microsoft "
+                    "Office. Check that the file is valid and supported."
+                ) from error
+            if not converted.is_file() or converted.stat().st_size == 0:
+                raise InputError(
+                    f"Microsoft Office did not create a PDF for '{filename}'."
+                )
+            shutil.copyfile(converted, destination)
+        finally:
+            if document is not None:
+                try:
+                    document.Close(False)
+                except pywintypes.com_error:
+                    logger.exception("Could not close Office document after conversion.")
+            if application is not None:
+                try:
+                    application.Quit()
+                except pywintypes.com_error:
+                    logger.exception("Could not close Office application after conversion.")
+            pythoncom.CoUninitialize()
 
 
 def analyze_pdf(upload: FileStorage) -> dict:

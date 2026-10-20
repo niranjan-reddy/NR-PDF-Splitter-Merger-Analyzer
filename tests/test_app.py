@@ -1,9 +1,10 @@
 import io
 import os
+import sys
 import tempfile
 import time
 import unittest
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 from zipfile import ZipFile
@@ -160,18 +161,42 @@ class AppTests(unittest.TestCase):
                 self.assertIn("error", response.get_json())
         self.assertEqual(list(self.root.iterdir()), [])
 
-    def test_document_to_pdf_uses_libreoffice_and_publishes_download(self):
-        def convert(command, **_kwargs):
-            output_dir = Path(command[command.index("--outdir") + 1])
-            source = Path(command[-1])
-            (output_dir / f"{source.stem}.pdf").write_bytes(
-                pdf_bytes((777,)).getvalue()
-            )
-            return SimpleNamespace(returncode=0, stderr="")
+    def test_document_to_pdf_uses_word_automation_and_publishes_download(self):
+        class ComError(Exception):
+            pass
 
-        with patch("pdf_tools.shutil.which", return_value="soffice"), patch(
-            "pdf_tools.subprocess.run", side_effect=convert
-        ) as run:
+        document = SimpleNamespace(Close=unittest.mock.Mock())
+
+        def open_document(source, **kwargs):
+            self.assertTrue(Path(source).is_file())
+            self.assertTrue(kwargs["ReadOnly"])
+            self.assertFalse(kwargs["AddToRecentFiles"])
+            return document
+
+        def export_pdf(filename, export_format):
+            self.assertEqual(export_format, 17)
+            Path(filename).write_bytes(pdf_bytes((777,)).getvalue())
+
+        document.ExportAsFixedFormat = export_pdf
+        application = SimpleNamespace(
+            Documents=SimpleNamespace(Open=open_document),
+            Quit=unittest.mock.Mock(),
+        )
+        pythoncom = ModuleType("pythoncom")
+        pythoncom.CoInitialize = unittest.mock.Mock()
+        pythoncom.CoUninitialize = unittest.mock.Mock()
+        pywintypes = ModuleType("pywintypes")
+        pywintypes.com_error = ComError
+        win32com = ModuleType("win32com")
+        win32com.__path__ = []
+        client = ModuleType("win32com.client")
+        client.DispatchEx = unittest.mock.Mock(return_value=application)
+        with patch.dict(sys.modules, {
+            "pythoncom": pythoncom,
+            "pywintypes": pywintypes,
+            "win32com": win32com,
+            "win32com.client": client,
+        }):
             response = self.client.post("/api/document-to-pdf", data={
                 "file": (io.BytesIO(b"document contents"), "report.docx"),
             })
@@ -179,11 +204,14 @@ class AppTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["file"]["name"], "Converted report.pdf")
         self.assertEqual(widths(self.download(payload["file"]["url"])), [777])
-        command = run.call_args.args[0]
-        self.assertIn("--headless", command)
-        self.assertIn("--convert-to", command)
+        self.assertEqual(client.DispatchEx.call_args.args, ("Word.Application",))
+        self.assertEqual(application.AutomationSecurity, 3)
+        pythoncom.CoInitialize.assert_called_once()
+        pythoncom.CoUninitialize.assert_called_once()
+        document.Close.assert_called_once_with(False)
+        application.Quit.assert_called_once()
 
-    def test_document_to_pdf_requires_one_supported_file_and_converter(self):
+    def test_document_to_pdf_requires_one_supported_file_and_office(self):
         self.assertEqual(self.client.post("/api/document-to-pdf").status_code, 400)
         response = self.client.post("/api/document-to-pdf", data={
             "file": (io.BytesIO(b"contents"), "report.exe"),
@@ -194,13 +222,73 @@ class AppTests(unittest.TestCase):
             ("file", (io.BytesIO(b"second"), "second.docx")),
         ]))
         self.assertEqual(response.status_code, 400)
-        with patch("pdf_tools.shutil.which", return_value=None):
+        with patch.dict(sys.modules, {
+            "pythoncom": None,
+            "pywintypes": None,
+            "win32com": None,
+            "win32com.client": None,
+        }):
             response = self.client.post("/api/document-to-pdf", data={
                 "file": (io.BytesIO(b"document contents"), "report.docx"),
             })
         self.assertEqual(response.status_code, 503)
-        self.assertIn("LibreOffice", response.get_json()["error"])
+        self.assertIn("pywin32", response.get_json()["error"])
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_document_to_pdf_routes_excel_and_powerpoint_to_their_apps(self):
+        class ComError(Exception):
+            pass
+
+        for filename, prog_id, collection_name, export_kind in (
+            ("report.xlsx", "Excel.Application", "Workbooks", "excel"),
+            ("slides.pptx", "PowerPoint.Application", "Presentations", "powerpoint"),
+        ):
+            with self.subTest(filename=filename):
+                document = SimpleNamespace(Close=unittest.mock.Mock())
+                if export_kind == "excel":
+                    def export_pdf(export_type, destination):
+                        self.assertEqual(export_type, 0)
+                        Path(destination).write_bytes(pdf_bytes((888,)).getvalue())
+
+                    document.ExportAsFixedFormat = export_pdf
+                    open_document = unittest.mock.Mock(return_value=document)
+                else:
+                    def export_pdf(destination, file_type):
+                        self.assertEqual(file_type, 32)
+                        Path(destination).write_bytes(pdf_bytes((999,)).getvalue())
+
+                    document.SaveAs = export_pdf
+                    open_document = unittest.mock.Mock(return_value=document)
+                application = SimpleNamespace(
+                    Quit=unittest.mock.Mock(),
+                    **{collection_name: SimpleNamespace(Open=open_document)},
+                )
+                pythoncom = ModuleType("pythoncom")
+                pythoncom.CoInitialize = unittest.mock.Mock()
+                pythoncom.CoUninitialize = unittest.mock.Mock()
+                pywintypes = ModuleType("pywintypes")
+                pywintypes.com_error = ComError
+                win32com = ModuleType("win32com")
+                win32com.__path__ = []
+                client = ModuleType("win32com.client")
+                client.DispatchEx = unittest.mock.Mock(return_value=application)
+                with patch.dict(sys.modules, {
+                    "pythoncom": pythoncom,
+                    "pywintypes": pywintypes,
+                    "win32com": win32com,
+                    "win32com.client": client,
+                }):
+                    response = self.client.post("/api/document-to-pdf", data={
+                        "file": (io.BytesIO(b"document contents"), filename),
+                    })
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(client.DispatchEx.call_args.args, (prog_id,))
+                self.assertEqual(
+                    widths(self.download(response.get_json()["file"]["url"])),
+                    [888 if export_kind == "excel" else 999],
+                )
+                document.Close.assert_called_once_with(False)
+                application.Quit.assert_called_once()
 
     def test_missing_uploads(self):
         for endpoint in ("split", "merge"):

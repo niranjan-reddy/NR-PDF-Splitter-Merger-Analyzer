@@ -16,8 +16,8 @@ from pypdf.errors import PdfReadError
 from werkzeug.exceptions import HTTPException
 
 from pdf_tools import (
-    ConverterUnavailable,
     InputError,
+    OfficeUnavailable,
     analyze_pdf,
     document_to_pdf,
     images_to_pdf as convert_images_to_pdf,
@@ -217,8 +217,8 @@ def create_app(test_config=None):
     def invalid_input(error):
         return jsonify(error=str(error)), 400
 
-    @app.errorhandler(ConverterUnavailable)
-    def converter_unavailable(error):
+    @app.errorhandler(OfficeUnavailable)
+    def office_unavailable(error):
         return jsonify(error=str(error)), 503
 
     @app.errorhandler(PdfReadError)

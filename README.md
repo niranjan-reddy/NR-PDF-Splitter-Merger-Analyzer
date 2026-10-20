@@ -32,10 +32,10 @@ build step is required.
   ascending order, regardless of picker selection order. Each image contributes
   one page; transparent areas are rendered white.
 - **Documents to PDF:** convert a single Word, Excel, PowerPoint, OpenDocument,
-  RTF, CSV, HTML, or text file to PDF using LibreOffice installed on the server.
-  Common `.doc`, `.docx`, `.docm`, `.xls`, `.xlsx`, `.xlsm`, `.ppt`, `.pptx`,
-  and `.pptm` formats are supported. The converter runs locally; files are not
-  sent to a third-party service. Unsupported or invalid files return an error.
+  RTF, CSV, HTML, or text file to PDF using locally installed Microsoft Office.
+  Conversion uses Word, Excel, or PowerPoint automation as appropriate. The
+  converter runs locally; files are not sent to a third-party service.
+  Unsupported or invalid files return an error.
 - **Loading state:** each operation disables its controls and displays a spinner
   throughout upload and processing. The page stays responsive, and each form can
   be used independently. This is an activity indicator, not percentage progress.
@@ -56,8 +56,12 @@ build step is required.
 ## Requirements
 
 - Python **3.10 or newer** (Python 3.14 is supported).
-- **LibreOffice** installed on the server and available on `PATH` for document
-  conversion. Image conversion does not require LibreOffice.
+- **Microsoft Office desktop applications** installed and activated on Windows
+  for document conversion, with the corresponding Office application available
+  to the account running the app.
+- A user-interactive Windows session for Office automation. Microsoft Office
+  COM automation is not recommended for unattended server/service processes;
+  image conversion does not require Office.
 - A current web browser with JavaScript enabled.
 - Disk space for generated PDFs and ZIPs; RAM appropriate to the documents.
 - Internet access to install dependencies initially. The app itself does not
@@ -109,8 +113,11 @@ not affect it.
 
 To convert an office document, select one supported Word, Excel, PowerPoint,
 OpenDocument, RTF, CSV, HTML, or text file and click **Convert Document to PDF**.
-LibreOffice must be installed and available on the server's `PATH`. A single
-document is converted per request.
+Microsoft Word, Excel, and/or PowerPoint must be installed and activated on the
+Windows computer running the app. Each format is converted by its corresponding
+Office desktop application. A single document is converted per request. Office
+automation runs in the app's user session and may not work when the app is run
+as an unattended Windows service.
 
 Do not refresh or close the page while processing. Downloads are links to
 server-generated files; save them before they expire. Refreshing the page clears
@@ -253,16 +260,16 @@ precedence, missing common properties, exact upload size, rotated and scaled
 page dimensions, orientation, encrypted-file summaries, multi-file batches
 with duplicate filenames and individual errors, invalid inputs, upload limits,
 and isolation from existing output jobs. Conversion coverage checks image
-filename ordering, page counts, invalid images and document uploads, mocked
-LibreOffice conversion, and the missing-converter response.
+filename ordering, page counts, invalid images and document uploads, and mocked
+Microsoft Office automation.
 
 ### Dependencies
 
 - **Flask:** HTTP application, templates, multipart uploads, download responses.
 - **pypdf:** PDF parsing and page writing.
 - **Pillow:** decoding and PDF generation from image uploads.
-- **LibreOffice:** external headless converter required for document-to-PDF; must
-  be installed separately and available on the server's `PATH`.
+- **pywin32:** Windows COM integration for Office document conversion.
+- **Microsoft Office:** installed desktop application required for document-to-PDF.
 - **Waitress:** a Windows-compatible WSGI server for non-development use.
 
 Compatible dependency ranges are declared in `requirements.txt`; they are not
