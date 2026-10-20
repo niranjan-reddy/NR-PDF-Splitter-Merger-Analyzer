@@ -87,7 +87,9 @@ function showResults(container, data, operation) {
     return;
   }
   const title = document.createElement("h3");
-  title.textContent = operation === "split" ? "Your split files are ready" : "Your merged PDF is ready";
+  title.textContent = operation === "split" ? "Your split files are ready"
+    : operation === "merge" ? "Your merged PDF is ready"
+      : "Your converted PDF is ready";
   container.append(title);
   if (operation === "split") {
     container.append(downloadLink(data.archive, "Download all files as ZIP"));
@@ -102,9 +104,15 @@ function showResults(container, data, operation) {
     }
   } else {
     container.append(downloadLink(data.file));
-    const detail = document.createElement("p");
-    detail.textContent = `${data.file.pages} pages, in your selected file order.`;
-    container.append(detail);
+    if (operation === "merge") {
+      const detail = document.createElement("p");
+      detail.textContent = `${data.file.pages} pages, in your selected file order.`;
+      container.append(detail);
+    } else if (operation === "images-to-pdf") {
+      const detail = document.createElement("p");
+      detail.textContent = `${data.file.pages} images, ordered by filename.`;
+      container.append(detail);
+    }
   }
 }
 
@@ -186,7 +194,15 @@ function showAnalysis(container, analysis) {
   container.append(wrapper);
 }
 
-for (const operation of ["split", "merge", "analyze"]) {
+const operationMessages = {
+  split: "Uploading and splitting PDF. Please keep this page open...",
+  merge: "Uploading and merging PDFs. Please keep this page open...",
+  analyze: "Uploading and analyzing PDFs. Please keep this page open...",
+  "images-to-pdf": "Uploading images and creating a PDF. Please keep this page open...",
+  "document-to-pdf": "Uploading and converting the document. Please keep this page open...",
+};
+
+for (const operation of Object.keys(operationMessages)) {
   const form = document.querySelector(`#${operation}-form`);
   const results = document.querySelector(`#${operation}-results`);
   const error = form.querySelector(".error");
@@ -248,7 +264,7 @@ for (const operation of ["split", "merge", "analyze"]) {
     if (busy) return;
     const payload = new FormData(form);
     error.hidden = true;
-    setBusy(true, "Uploading and processing PDFs. Please keep this page open...");
+    setBusy(true, operationMessages[operation]);
     try {
       await cleanupPreviousJob();
       results.replaceChildren();
@@ -257,7 +273,7 @@ for (const operation of ["split", "merge", "analyze"]) {
         throw new Error(`The server returned an unexpected response (${response.status}).`);
       }
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "The PDF operation failed.");
+      if (!response.ok) throw new Error(data.error || "The operation failed.");
       cleanupUrl = data.cleanup_url;
       showResults(results, data, operation);
     } catch (failure) {

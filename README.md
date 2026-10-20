@@ -1,6 +1,7 @@
 # NR's PDF Workshop
 
-A Python web application for splitting, merging, and analyzing PDF documents.
+A Python web application for converting images and documents to PDF, splitting,
+merging, and analyzing PDF documents.
 The responsive browser interface supports uploads, processing indicators, readable validation
 errors, and direct downloads. No Node.js, database, external PDF API, or frontend
 build step is required.
@@ -26,16 +27,25 @@ build step is required.
 - **Merged download:** one file named `Merged PDFs YYYYMMDD-HHMMSS.pdf`, using the
   server's local date and time. Separate operation directories prevent filename
   collisions even when multiple merges finish in the same second.
+- **Images to PDF:** upload one or more BMP, GIF, JPEG, PNG, TIFF, or WebP images
+  to create one PDF. Pages are ordered by uploaded filename in case-insensitive
+  ascending order, regardless of picker selection order. Each image contributes
+  one page; transparent areas are rendered white.
+- **Documents to PDF:** convert a single Word, Excel, PowerPoint, OpenDocument,
+  RTF, CSV, HTML, or text file to PDF using LibreOffice installed on the server.
+  Common `.doc`, `.docx`, `.docm`, `.xls`, `.xlsx`, `.xlsm`, `.ppt`, `.pptx`,
+  and `.pptm` formats are supported. The converter runs locally; files are not
+  sent to a third-party service. Unsupported or invalid files return an error.
 - **Loading state:** each operation disables its controls and displays a spinner
-  throughout upload and processing. The page stays responsive, and all three forms
-  can be used independently. This is an activity indicator, not percentage progress.
+  throughout upload and processing. The page stays responsive, and each form can
+  be used independently. This is an activity indicator, not percentage progress.
 - **Reset:** each form has its own Reset button. It clears selected files,
   ranges, errors, and results, and deletes that form's previous generated files
   from the server, if any. Merge resets to two empty upload rows; analysis
   clears its displayed report without deleting files. The other forms are
   unaffected. Reset is disabled while processing or cleaning up; if cleanup
   fails, an error is shown and the form is retained so you can retry.
-- **Analyze:** a separate section below Split and Merge shows the uploaded
+- **Analyze:** a separate section below the conversion tools shows the uploaded
   filename, exact file size, page count, encryption status, document metadata,
   and per-page dimensions, rotation, and orientation. Select multiple PDFs at
   once to get a separate numbered report for each, in upload order. Author and
@@ -46,6 +56,8 @@ build step is required.
 ## Requirements
 
 - Python **3.10 or newer** (Python 3.14 is supported).
+- **LibreOffice** installed on the server and available on `PATH` for document
+  conversion. Image conversion does not require LibreOffice.
 - A current web browser with JavaScript enabled.
 - Disk space for generated PDFs and ZIPs; RAM appropriate to the documents.
 - Internet access to install dependencies initially. The app itself does not
@@ -88,18 +100,30 @@ each document in the intended order. Reorder rows if needed, then click
 the rows when **Set upload rows** is clicked; the displayed rows define the
 actual merge order.
 
+### Convert images and documents
+
+To create a PDF from images, select one or more supported images and click
+**Convert Images to PDF**. The output contains one page per image, sorted by
+filename in case-insensitive ascending order; the order in the file picker does
+not affect it.
+
+To convert an office document, select one supported Word, Excel, PowerPoint,
+OpenDocument, RTF, CSV, HTML, or text file and click **Convert Document to PDF**.
+LibreOffice must be installed and available on the server's `PATH`. A single
+document is converted per request.
+
 Do not refresh or close the page while processing. Downloads are links to
 server-generated files; save them before they expire. Refreshing the page clears
 the displayed result links and any displayed analysis.
 
-For Split and Merge, download anything you want to keep before clicking
-**Reset** or submitting another job in the same form: both remove that form's previous generated
-outputs and invalidate their download links. Files already saved to your
-computer are not deleted.
+For Split, Merge, and either conversion form, download anything you want to
+keep before clicking **Reset** or submitting another job in the same form:
+both remove that form's previous generated outputs and invalidate their
+download links. Files already saved to your computer are not deleted.
 
 ### Analyze PDFs
 
-1. Scroll to **Analyze PDFs**, below the Split and Merge sections.
+1. Scroll to **Analyze PDFs**, below the conversion tools.
 2. Choose one or more PDFs (use Ctrl/Cmd or Shift in the file picker) and click **Analyze PDFs**.
 3. Wait for the upload and processing indicator to finish.
 4. Read each file's separate document summary, metadata, and scrollable
@@ -150,14 +174,14 @@ Analysis runs on the same server and uses the same upload limit as Split and
 Merge; the limit applies to the total batch, not each file. It does not modify
 the PDFs, create downloadable reports, or save analysis outputs. Click its
 **Reset** button to clear all selected files and all report/error sections.
-Running or resetting analysis does not affect existing Split or Merge results.
+Running or resetting analysis does not affect results from other operations.
 Analysis is a document summary, not OCR, text extraction, PDF repair, or a
 malware/security scan.
 
 ### Reset an operation
 
 1. Save any generated PDFs or ZIP you want to keep.
-2. Click **Reset** beneath **Split PDF**, **Merge PDFs**, or **Analyze PDFs**.
+2. Click **Reset** beneath the operation you want to clear.
 3. Wait for the cleanup indicator to finish before selecting new inputs.
 
 Split Reset clears the source file and page ranges. Merge Reset clears all
@@ -168,7 +192,10 @@ or deletes original files on your computer.
 
 Analyze Reset clears all its selected files, errors, and displayed reports only.
 Analysis does not store a server-side output job, so there are no analysis
-files to delete. It does not affect Split or Merge results.
+files to delete. It does not affect results from other operations.
+
+Image and document conversion Reset clears the selected input, errors, and
+download link, and deletes that conversion form's previous output job.
 
 Reset is available even before a job has run or after an input error. It is
 disabled while that form is uploading, processing, or cleaning up; it does not
@@ -195,7 +222,7 @@ Never expose Flask debug mode to other users or untrusted networks.
 | Path | Purpose |
 |------|---------|
 | `app.py` | Application factory, HTTP routes, validation responses, per-job deletion, download lifecycle, cleanup command |
-| `pdf_tools.py` | PDF reading, summary analysis, range parsing, page extraction, ordered page merging |
+| `pdf_tools.py` | PDF reading, summary analysis, range parsing, image/document conversion, page extraction, ordered page merging |
 | `templates\index.html` | Accessible, server-rendered application shell |
 | `static\app.js` | Upload rows, ordering, asynchronous form submission, loading states, download links, independent form resets |
 | `static\style.css` | Responsive layout, focus states, spinner, reduced-motion support |
@@ -225,12 +252,17 @@ Analysis coverage includes standard and XMP metadata, information-dictionary
 precedence, missing common properties, exact upload size, rotated and scaled
 page dimensions, orientation, encrypted-file summaries, multi-file batches
 with duplicate filenames and individual errors, invalid inputs, upload limits,
-and isolation from existing output jobs.
+and isolation from existing output jobs. Conversion coverage checks image
+filename ordering, page counts, invalid images and document uploads, mocked
+LibreOffice conversion, and the missing-converter response.
 
 ### Dependencies
 
 - **Flask:** HTTP application, templates, multipart uploads, download responses.
-- **pypdf:** PDF parsing and page writing; no external PDF executables required.
+- **pypdf:** PDF parsing and page writing.
+- **Pillow:** decoding and PDF generation from image uploads.
+- **LibreOffice:** external headless converter required for document-to-PDF; must
+  be installed separately and available on the server's `PATH`.
 - **Waitress:** a Windows-compatible WSGI server for non-development use.
 
 Compatible dependency ranges are declared in `requirements.txt`; they are not

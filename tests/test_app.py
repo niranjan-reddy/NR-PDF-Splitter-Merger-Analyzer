@@ -3,10 +3,12 @@ import os
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 from zipfile import ZipFile
 
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import DecodedStreamObject, FloatObject, NameObject
 from werkzeug.datastructures import MultiDict
@@ -29,6 +31,13 @@ def pdf_bytes(widths=(101, 102, 103, 104), encrypted=False):
 
 def widths(data):
     return [int(page.mediabox.width) for page in PdfReader(io.BytesIO(data)).pages]
+
+
+def image_bytes(size, color, image_format="PNG"):
+    stream = io.BytesIO()
+    Image.new("RGB", size, color).save(stream, format=image_format)
+    stream.seek(0)
+    return stream
 
 
 class RangeTests(unittest.TestCase):
@@ -72,7 +81,9 @@ class AppTests(unittest.TestCase):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Split a PDF", response.data)
-        self.assertEqual(response.data.count(b'class="secondary reset"'), 3)
+        self.assertIn(b"Images to PDF", response.data)
+        self.assertIn(b"Documents to PDF", response.data)
+        self.assertEqual(response.data.count(b'class="secondary reset"'), 5)
         self.assertGreater(response.data.index(b'id="analyze-title"'),
                            response.data.index(b'id="merge-title"'))
         self.assertIn("script-src 'self'", response.headers["Content-Security-Policy"])
@@ -120,6 +131,76 @@ class AppTests(unittest.TestCase):
         self.assertRegex(file["name"], r"^Merged PDFs \d{8}-\d{6}\.pdf$")
         self.assertEqual(file["pages"], 5)
         self.assertEqual(widths(self.download(file["url"])), [301, 302, 101, 201, 202])
+
+    def test_images_to_pdf_sorts_filenames_and_returns_one_page_per_image(self):
+        response = self.client.post("/api/images-to-pdf", data=MultiDict([
+            ("files", (image_bytes((30, 40), "blue"), "z-last.png")),
+            ("files", (image_bytes((50, 60), "red", "JPEG"), "A-first.jpg")),
+        ]))
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["file"]["pages"], 2)
+        reader = PdfReader(io.BytesIO(self.download(payload["file"]["url"])))
+        self.assertEqual(len(reader.pages), 2)
+        self.assertAlmostEqual(float(reader.pages[0].mediabox.width), 36, places=1)
+        self.assertAlmostEqual(float(reader.pages[1].mediabox.width), 21.6, places=1)
+
+    def test_images_to_pdf_rejects_missing_invalid_and_unsupported_images(self):
+        self.assertEqual(self.client.post("/api/images-to-pdf").status_code, 400)
+        cases = [
+            (io.BytesIO(b"not an image"), "broken.png"),
+            (image_bytes((10, 10), "red"), "unsupported.svg"),
+        ]
+        for stream, filename in cases:
+            with self.subTest(filename=filename):
+                response = self.client.post("/api/images-to-pdf", data={
+                    "files": (stream, filename),
+                })
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("error", response.get_json())
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_document_to_pdf_uses_libreoffice_and_publishes_download(self):
+        def convert(command, **_kwargs):
+            output_dir = Path(command[command.index("--outdir") + 1])
+            source = Path(command[-1])
+            (output_dir / f"{source.stem}.pdf").write_bytes(
+                pdf_bytes((777,)).getvalue()
+            )
+            return SimpleNamespace(returncode=0, stderr="")
+
+        with patch("pdf_tools.shutil.which", return_value="soffice"), patch(
+            "pdf_tools.subprocess.run", side_effect=convert
+        ) as run:
+            response = self.client.post("/api/document-to-pdf", data={
+                "file": (io.BytesIO(b"document contents"), "report.docx"),
+            })
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["file"]["name"], "Converted report.pdf")
+        self.assertEqual(widths(self.download(payload["file"]["url"])), [777])
+        command = run.call_args.args[0]
+        self.assertIn("--headless", command)
+        self.assertIn("--convert-to", command)
+
+    def test_document_to_pdf_requires_one_supported_file_and_converter(self):
+        self.assertEqual(self.client.post("/api/document-to-pdf").status_code, 400)
+        response = self.client.post("/api/document-to-pdf", data={
+            "file": (io.BytesIO(b"contents"), "report.exe"),
+        })
+        self.assertEqual(response.status_code, 400)
+        response = self.client.post("/api/document-to-pdf", data=MultiDict([
+            ("file", (io.BytesIO(b"first"), "first.docx")),
+            ("file", (io.BytesIO(b"second"), "second.docx")),
+        ]))
+        self.assertEqual(response.status_code, 400)
+        with patch("pdf_tools.shutil.which", return_value=None):
+            response = self.client.post("/api/document-to-pdf", data={
+                "file": (io.BytesIO(b"document contents"), "report.docx"),
+            })
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("LibreOffice", response.get_json()["error"])
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_missing_uploads(self):
         for endpoint in ("split", "merge"):

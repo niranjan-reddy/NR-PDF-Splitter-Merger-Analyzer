@@ -15,7 +15,17 @@ from flask import Flask, jsonify, render_template, request, send_from_directory,
 from pypdf.errors import PdfReadError
 from werkzeug.exceptions import HTTPException
 
-from pdf_tools import InputError, analyze_pdf, merge_pdfs, parse_ranges, read_pdf, split_pdf
+from pdf_tools import (
+    ConverterUnavailable,
+    InputError,
+    analyze_pdf,
+    document_to_pdf,
+    images_to_pdf as convert_images_to_pdf,
+    merge_pdfs,
+    parse_ranges,
+    read_pdf,
+    split_pdf,
+)
 
 
 def create_app(test_config=None):
@@ -133,6 +143,47 @@ def create_app(test_config=None):
             file=download_info(job, name, pages=pages),
         )
 
+    @app.post("/api/images-to-pdf")
+    def images_to_pdf():
+        cleanup_outputs()
+        uploads = request.files.getlist("files")
+        if not uploads:
+            raise InputError("Upload at least one image to convert.")
+        job = uuid4().hex
+        name = f"Images to PDF {datetime.now():%Y%m%d-%H%M%S}.pdf"
+        with tempfile.TemporaryDirectory(prefix="images-to-pdf-") as working:
+            work = Path(working)
+            pages = convert_images_to_pdf(uploads, work / name)
+            shutil.copytree(work, output_root / job)
+            os.utime(output_root / job, None)
+        return jsonify(
+            cleanup_url=url_for("delete_job", job=job),
+            file=download_info(job, name, pages=pages),
+        )
+
+    @app.post("/api/document-to-pdf")
+    def document_to_pdf_route():
+        cleanup_outputs()
+        uploads = request.files.getlist("file")
+        if len(uploads) != 1:
+            raise InputError("Upload exactly one document to convert.")
+        stem = re.sub(
+            r"[^A-Za-z0-9_.-]+",
+            "_",
+            Path(uploads[0].filename or "document").stem,
+        ).strip("._")[:120] or "document"
+        name = f"Converted {stem}.pdf"
+        job = uuid4().hex
+        with tempfile.TemporaryDirectory(prefix="document-to-pdf-") as working:
+            work = Path(working)
+            document_to_pdf(uploads[0], work / name)
+            shutil.copytree(work, output_root / job)
+            os.utime(output_root / job, None)
+        return jsonify(
+            cleanup_url=url_for("delete_job", job=job),
+            file=download_info(job, name),
+        )
+
     @app.delete("/api/jobs/<job>")
     def delete_job(job):
         if not re.fullmatch(r"[0-9a-f]{32}", job):
@@ -165,6 +216,10 @@ def create_app(test_config=None):
     @app.errorhandler(InputError)
     def invalid_input(error):
         return jsonify(error=str(error)), 400
+
+    @app.errorhandler(ConverterUnavailable)
+    def converter_unavailable(error):
+        return jsonify(error=str(error)), 503
 
     @app.errorhandler(PdfReadError)
     def invalid_pdf(error):

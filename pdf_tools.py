@@ -1,8 +1,13 @@
 """PDF operations independent of the web layer."""
 
 import re
+import shutil
+import subprocess
+import tempfile
+import warnings
 from pathlib import Path
 
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader, PdfWriter
 from werkzeug.datastructures import FileStorage
 from werkzeug.utils import secure_filename
@@ -10,6 +15,18 @@ from werkzeug.utils import secure_filename
 
 class InputError(ValueError):
     """An input that cannot be processed."""
+
+
+class ConverterUnavailable(RuntimeError):
+    """The external document converter is not installed."""
+
+
+IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".webp"}
+DOCUMENT_EXTENSIONS = {
+    ".csv", ".doc", ".docx", ".docm", ".html", ".htm", ".odt", ".odp",
+    ".ods", ".ppt", ".pptx", ".pptm", ".rtf", ".txt", ".xls", ".xlsx",
+    ".xlsm",
+}
 
 
 def read_pdf(upload: FileStorage, *, allow_encrypted: bool = False) -> PdfReader:
@@ -26,6 +43,119 @@ def read_pdf(upload: FileStorage, *, allow_encrypted: bool = False) -> PdfReader
     if not len(reader.pages):
         raise InputError(f"'{name}' contains no pages.")
     return reader
+
+
+def images_to_pdf(uploads: list[FileStorage], destination: Path) -> int:
+    if not uploads:
+        raise InputError("Upload at least one image to convert.")
+
+    ordered = sorted(
+        uploads,
+        key=lambda upload: ((upload.filename or "").casefold(), upload.filename or ""),
+    )
+    pages = []
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            for upload in ordered:
+                filename = upload.filename or ""
+                if not filename:
+                    raise InputError("Choose a filename for every image.")
+                if Path(filename).suffix.lower() not in IMAGE_EXTENSIONS:
+                    raise InputError(f"'{filename}' is not a supported image file.")
+                try:
+                    upload.stream.seek(0)
+                    with Image.open(upload.stream) as image:
+                        image.load()
+                        image = ImageOps.exif_transpose(image)
+                        rgba = image.convert("RGBA")
+                        page = Image.new("RGB", rgba.size, "white")
+                        page.paste(rgba, mask=rgba.getchannel("A"))
+                        pages.append(page)
+                except (
+                    Image.DecompressionBombError,
+                    Image.DecompressionBombWarning,
+                    UnidentifiedImageError,
+                    OSError,
+                    EOFError,
+                    SyntaxError,
+                    ValueError,
+                ) as error:
+                    raise InputError(
+                        f"'{filename}' is empty, damaged, or too large to process as an image."
+                    ) from error
+        pages[0].save(
+            destination,
+            "PDF",
+            save_all=True,
+            append_images=pages[1:],
+            resolution=100.0,
+        )
+    finally:
+        for page in pages:
+            page.close()
+    return len(pages)
+
+
+def document_to_pdf(upload: FileStorage, destination: Path) -> None:
+    filename = upload.filename or ""
+    if not filename:
+        raise InputError("Choose a document to convert.")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in DOCUMENT_EXTENSIONS:
+        raise InputError(
+            f"'{filename}' is not a supported document type. Choose a Word, Excel, "
+            "PowerPoint, OpenDocument, RTF, CSV, HTML, or text file."
+        )
+    converter = shutil.which("soffice") or shutil.which("libreoffice")
+    if not converter:
+        raise ConverterUnavailable(
+            "Document conversion is unavailable. Install LibreOffice on the server "
+            "and ensure soffice is on PATH."
+        )
+
+    safe_name = secure_filename(filename) or f"document{suffix}"
+    with tempfile.TemporaryDirectory(prefix="document-convert-") as temporary:
+        work = Path(temporary)
+        source = work / safe_name
+        upload.save(source)
+        profile = (work / "profile").as_uri()
+        try:
+            result = subprocess.run(
+                [
+                    converter,
+                    f"-env:UserInstallation={profile}",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    str(work),
+                    str(source),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise InputError(
+                f"'{filename}' took too long to convert. Try a smaller or simpler document."
+            ) from error
+        except OSError as error:
+            raise ConverterUnavailable(
+                "LibreOffice could not be started. Check the server installation."
+            ) from error
+        converted = work / f"{source.stem}.pdf"
+        if (
+            result.returncode != 0
+            or not converted.is_file()
+            or converted.stat().st_size == 0
+        ):
+            raise InputError(
+                f"'{filename}' could not be converted. Check that the file is valid "
+                "and supported."
+            )
+        shutil.copyfile(converted, destination)
 
 
 def analyze_pdf(upload: FileStorage) -> dict:

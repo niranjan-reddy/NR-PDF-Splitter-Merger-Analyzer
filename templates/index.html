@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NR's PDF Workshop | Split, Merge &amp; Analyze</title>
+  <title>NR's PDF Workshop | Convert, Split, Merge &amp; Analyze</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='app.js') }}" defer></script>
 </head>
@@ -12,7 +12,7 @@
     <header>
       <span class="eyebrow">NR's PDF WORKSHOP</span>
       <h1>Your pages. Your order.</h1>
-      <p>Split a document, bring multiple PDFs together, or inspect a document's details.</p>
+      <p>Convert images and documents to PDF, split or merge PDFs, or inspect a document's details.</p>
     </header>
     <aside class="notice">
       Files are processed on this server, not sent to a third-party service.
@@ -60,9 +60,43 @@
         </form>
         <div id="merge-results" class="results" aria-live="polite"></div>
       </section>
+      <section class="card" aria-labelledby="images-title">
+        <span class="step">03 / CONVERT</span>
+        <h2 id="images-title">Images to PDF</h2>
+        <p>Combine multiple images into one PDF, ordered by filename from A to Z.</p>
+        <form id="images-to-pdf-form">
+          <fieldset>
+            <label for="image-files">Image files</label>
+            <input id="image-files" name="files" type="file" accept=".bmp,.gif,.jpg,.jpeg,.png,.tif,.tiff,.webp" multiple required>
+            <small>Supported formats: BMP, GIF, JPEG, PNG, TIFF, and WebP. Each image becomes one page; transparent areas are filled with white.</small>
+            <button type="submit">Convert Images to PDF</button>
+            <button type="button" class="secondary reset">Reset</button>
+          </fieldset>
+          <p class="status" role="status" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="status-text"></span></p>
+          <p class="error" role="alert" hidden></p>
+        </form>
+        <div id="images-to-pdf-results" class="results" aria-live="polite"></div>
+      </section>
+      <section class="card" aria-labelledby="document-title">
+        <span class="step">04 / CONVERT</span>
+        <h2 id="document-title">Documents to PDF</h2>
+        <p>Convert one Word, Excel, PowerPoint, or other supported document to PDF.</p>
+        <form id="document-to-pdf-form">
+          <fieldset>
+            <label for="document-file">Document file</label>
+            <input id="document-file" name="file" type="file" accept=".csv,.doc,.docm,.docx,.htm,.html,.odp,.ods,.odt,.ppt,.pptm,.pptx,.rtf,.txt,.xls,.xlsm,.xlsx" required>
+            <small>Supports common Microsoft Office and OpenDocument files, plus RTF, CSV, HTML, and text. Requires LibreOffice installed on the server.</small>
+            <button type="submit">Convert Document to PDF</button>
+            <button type="button" class="secondary reset">Reset</button>
+          </fieldset>
+          <p class="status" role="status" aria-live="polite" hidden><span class="spinner" aria-hidden="true"></span><span class="status-text"></span></p>
+          <p class="error" role="alert" hidden></p>
+        </form>
+        <div id="document-to-pdf-results" class="results" aria-live="polite"></div>
+      </section>
     </div>
     <section class="card analysis-card" aria-labelledby="analyze-title">
-      <span class="step">03 / INSPECT</span>
+      <span class="step">05 / INSPECT</span>
       <h2 id="analyze-title">Analyze PDFs</h2>
       <p>View page count, file size, encryption status, document metadata, and each page's dimensions and orientation.</p>
       <form id="analyze-form">
